@@ -9,8 +9,9 @@ ENV LISTEN_PORT=${LISTEN_PORT}
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends mtr-tiny \
-    && rm -rf /var/lib/apt/lists/* \
-    && groupadd -g 1000 appuser \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd -g 1000 appuser \
     && useradd -u 1000 -g appuser -M -s /usr/sbin/nologin appuser
 
 RUN pip install --no-cache-dir uv
@@ -27,7 +28,7 @@ COPY static ./static
 ENV PATH="/app/.venv/bin:$PATH"
 
 RUN mkdir -p /app/logs \
-    && chown -R appuser:appuser /app
+&& chown -R appuser:appuser /app
 
 USER appuser
 
