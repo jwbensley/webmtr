@@ -134,7 +134,7 @@ def annotate_dns_names(hubs: list[dict]) -> None:
 
 @app.route("/")
 def index():
-    return render_template("index.html", client_ip=get_client_ip())
+    return render_template("index.html")
 
 
 @app.route("/traceroute")
