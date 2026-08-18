@@ -1,5 +1,25 @@
 # Web MTR
 
+## Usage
+
+```text
+# Start the container
+docker compose up -d
+
+# Logs are sent to a file
+tail -f logs/access.log
+```
+
+GET JSON output by calling the API directly:
+
+```text
+curl -s http://localhost:8371/traceroute?target=8.8.8.8 | jq
+```
+
+Open browser to <http://localhost:8371> to use the UI:
+
+[![Web MTR UI](screenshot.png)](screenshot.png)
+
 ## Overview
 
 This folder contains a basic web based traceroute.
@@ -23,22 +43,6 @@ The web application is built as follows:
 * A docker compose file is provided to run the application with a single command.
 * Capability NET_RAW is required for `mtr` to have ICMP privileges.
 
-## Usage
+## NAT64
 
-```text
-# Start the container
-docker compose up -d
-
-# Logs are sent to a file
-tail -f logs/access.log
-```
-
-GET JSON output by calling the API directly:
-
-```text
-curl -s http://localhost:8371/traceroute?target=8.8.8.8 | jq
-```
-
-Open browser to <http://localhost:8371> to use the UI:
-
-[![Web MTR UI](screenshot.png)](screenshot.png)
+This application supports NAT64 so that it can run on an IPv6 only host. If you're running it on an IPv6 only host, set the `NAT64` environment variable to the IPv6 prefix e.g. `64:ff9b::/96` in the `.env` file. If the host has dual-stack connectivity, leave this variable empty.
