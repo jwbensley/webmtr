@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Web MTR</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <div class="container">
+    <h1>Web MTR</h1>
+    <div class="ip-links">
+      <a href="http://ipv4.53bits.co.uk" target="_blank" rel="noopener noreferrer">What is my IPv4 address?</a>
+      <a href="http://ipv6.53bits.co.uk" target="_blank" rel="noopener noreferrer">What is my IPv6 address?</a>
+    </div>
+
+    <form id="traceroute-form">
+      <label for="target">Enter target IP address / hostname:</label>
+      <div class="input-row">
+        <input type="text" id="target" name="target" value="{{ client_ip }}" autocomplete="off" spellcheck="false" required>
+        <button type="submit" id="submit-btn">Start Traceroute</button>
+      </div>
+    </form>
+
+    <p id="status" class="status" role="status"></p>
+
+    <table id="results-table" class="hidden">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Host</th>
+          <th>DNS Name</th>
+          <th>ASN</th>
+          <th>Loss%</th>
+          <th>Sent</th>
+          <th>Last</th>
+          <th>Avg</th>
+          <th>Best</th>
+          <th>Worst</th>
+          <th>StDev</th>
+        </tr>
+      </thead>
+      <tbody id="results-body"></tbody>
+    </table>
+  </div>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

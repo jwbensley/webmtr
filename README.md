@@ -1,0 +1,44 @@
+# Web MTR
+
+## Overview
+
+This folder contains a basic web based traceroute.
+
+It is a single page web application which performs traceroute to an IP/hostname and displays the results in a user-friendly format.
+
+The web application is built as follows:
+
+* A single python script which runs the CLI command `mtr` and returns the results in JSON format.
+* UV is used to managed python dependencies and virtual environments.
+* An ICMP/v6 traceroute is performed.
+* Passes the JSON output and displays it in a web page.
+* The web page has a single input field for the user to enter the target IP/hostname and a button to start the traceroute.
+* The input field has a default value of the caller's IP address.
+* Two links are provided, one to ipv4.53bits.co.uk, and one to ipv6.53bits.co.uk (both open in a new tab), which the user can use to check their IP address.
+* The script runs the following MTR command: `mtr -j -c 10 <target>`, where `<target>` is the user input.
+* Gunicorn is used to run the web application and control the number of worker processes.
+* The application will run on port 8371.
+* The port and other settings are defined in a `.env` file.
+* The application is packaged as a Docker image for easy deployment.
+* A docker compose file is provided to run the application with a single command.
+* Capability NET_RAW is required for `mtr` to have ICMP privileges.
+
+## Usage
+
+```text
+# Start the container
+docker compose up -d
+
+# Logs are sent to a file
+tail -f logs/access.log
+```
+
+GET JSON output by calling the API directly:
+
+```text
+curl -s http://localhost:8371/traceroute?target=8.8.8.8 | jq
+```
+
+Open browser to <http://localhost:8371> to use the UI:
+
+[![Web MTR UI](screenshot.png)](screenshot.png)

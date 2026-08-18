@@ -1,0 +1,26 @@
+services:
+  webmtr:
+    build:
+      context: .
+      args:
+        GUNICORN_WORKERS: ${GUNICORN_WORKERS}
+        LISTEN_ADDR: ${LISTEN_ADDR}
+        LISTEN_PORT: ${LISTEN_PORT}
+    image: webmtr:latest
+    container_name: webmtr
+    env_file:
+      - .env
+    ports:
+      - "${LISTEN_PORT}:${LISTEN_PORT}"
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_RAW
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    volumes:
+      - ./app.py:/app/app.py:ro
+      - ./static:/app/static:ro
+      - ./templates:/app/templates:ro
+      - ./logs:/app/logs:rw
