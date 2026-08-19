@@ -46,3 +46,7 @@ The web application is built as follows:
 ## Bindings
 
 If you want to bing to a specific IPv6 address, set the `LISTEN_ADDR` env var using square bracket syntax: `LISTEN_ADDR=[fe80::1122:3344:5566:7788]`
+
+## NAT64
+
+If running on an IPv6 only host which uses NAT64 to provide IPv4 connectivity, ensure the `NAT64` env var contains the prefix of the NAT64 network, e.g. `NAT64=64:ff9b::/96`. This will result in the IPv4 addresses of each hop being extracted from the mtr output and displayed, along with their reverse DNS lookup result, and the ASN of the IPv4 address; rather than the NAT64 addresses (which have no reverse DNS or ASN information).

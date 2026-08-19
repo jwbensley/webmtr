@@ -9,7 +9,10 @@ from concurrent.futures import (
     ThreadPoolExecutor,
     TimeoutError as FutureTimeoutError,
 )
+from typing import Any
 
+import dns.exception
+import dns.resolver
 from flask import Flask, jsonify, render_template, request
 
 logging.basicConfig(
@@ -25,6 +28,7 @@ LISTEN_PORT = int(os.environ["LISTEN_PORT"])
 MAX_HOSTNAME_LENGTH = int(os.environ["MAX_HOSTNAME_LENGTH"])
 MTR_PING_COUNT = int(os.environ["MTR_PING_COUNT"])
 MTR_TIMEOUT_SECONDS = int(os.environ["MTR_TIMEOUT_SECONDS"])
+NAT64 = os.environ["NAT64"]
 
 _DNS_EXECUTOR = ThreadPoolExecutor(
     max_workers=8, thread_name_prefix="dns-lookup"
@@ -105,7 +109,140 @@ def reverse_dns_lookup(ip_address: str) -> str:
         return ""
 
 
-def annotate_dns_names(hubs: list[dict]) -> None:
+def _extract_ipv4_from_nat64(ipv6_str: str, nat64_prefix: str) -> str | None:
+    """If ipv6_str is a NAT64-mapped address inside nat64_prefix, return the
+    IPv4 address embedded in it per RFC 6052; otherwise return None."""
+
+    _NAT64_SUPPORTED_PREFIX_LENGTHS = (32, 40, 48, 56, 64, 96)
+
+    try:
+        v6_address = ipaddress.IPv6Address(ipv6_str)
+        prefix_net = ipaddress.IPv6Network(nat64_prefix, strict=False)
+    except ValueError:
+        logging.error(
+            "Invalid IPv6 address or NAT64 prefix: %s, %s",
+            sanitize_for_log(ipv6_str),
+            sanitize_for_log(nat64_prefix),
+        )
+        return None
+
+    prefix_len = prefix_net.prefixlen
+    if prefix_len not in _NAT64_SUPPORTED_PREFIX_LENGTHS:
+        return None
+    if v6_address not in prefix_net:
+        return None
+
+    v6_bytes = v6_address.packed
+    if prefix_len == 96:
+        # prefix(96 bits) + v4(32 bits), no reserved 'u' octet.
+        v4_bytes = v6_bytes[12:16]
+    else:
+        # RFC 6052 reserves a zero octet at bits 64-71 ('u'), so skip it
+        # before extracting the embedded v4 bits.
+        prefix_octets = prefix_len // 8
+        combined = v6_bytes[:8] + v6_bytes[9:16]
+        v4_bytes = combined[prefix_octets : prefix_octets + 4]
+
+    ipv4 = str(ipaddress.IPv4Address(v4_bytes))
+    logging.info(
+        f"Extracted IPv4 {ipv4} from NAT64-mapped IPv6 {ipv6_str} with prefix {nat64_prefix}"
+    )
+    return ipv4
+
+
+def replace_nat64_names(data: dict[str, Any], nat64_prefix: str) -> None:
+    """Replace each hop's NAT64-mapped IPv6 "host" with the IPv4 address it
+    embeds, in place, so results are shown in IPv4 form."""
+    prefix = (nat64_prefix or "").strip()
+    if not prefix:
+        return
+    try:
+        ipaddress.IPv6Network(prefix, strict=False)
+    except ValueError:
+        logging.error(
+            "NAT64 env var is not a valid IPv6 prefix: %s",
+            sanitize_for_log(prefix),
+        )
+        return
+
+    for hub in data.get("report", {}).get("hubs", []):
+        host = hub.get("host") or ""
+        ipv4_address = _extract_ipv4_from_nat64(host, prefix)
+        if ipv4_address is not None:
+            hub["host"] = ipv4_address
+
+
+def _asn_query_name(ip_address: str) -> str | None:
+    """Build the Team Cymru IP-to-ASN DNS query name for an IP address."""
+    try:
+        parsed = ipaddress.ip_address(ip_address)
+    except ValueError:
+        return None
+
+    if isinstance(parsed, ipaddress.IPv4Address):
+        octets = ip_address.split(".")
+        return ".".join(reversed(octets)) + ".origin.asn.cymru.com"
+
+    # IPv6: nibble-reversed hex digits of the full 128-bit address.
+    hex_digits = format(int(parsed), "032x")
+    return ".".join(reversed(hex_digits)) + ".origin6.asn.cymru.com"
+
+
+def _lookup_asn(ip_address: str) -> str | None:
+    """Query Team Cymru's IP-to-ASN DNS service for the origin AS of an IP
+    address, returning e.g. "AS15169", or None if it couldn't be found."""
+    query_name = _asn_query_name(ip_address)
+    if query_name is None:
+        return None
+
+    try:
+        answers = dns.resolver.resolve(
+            query_name, "TXT", lifetime=DNS_LOOKUP_TIMEOUT_SECONDS
+        )
+    except dns.exception.DNSException:
+        logging.error("ASN lookup failed for %s", sanitize_for_log(ip_address))
+        return None
+
+    for rdata in answers:
+        txt = b"".join(rdata.strings).decode("ascii", errors="replace")
+        # Response format: "ASN | BGP Prefix | CC | Registry | Allocated"
+        # ASN field may list multiple origin ASNs space-separated; use the
+        # first one.
+        asn_field = txt.split("|", 1)[0].strip()
+        first_asn = asn_field.split()[0] if asn_field else ""
+        if first_asn.isdigit():
+            return f"AS{first_asn}"
+
+    return None
+
+
+def annotate_asns(hubs: list[dict[str, Any]]) -> None:
+    """Fill in any missing "ASN" ("AS???") fields via a best-effort Team
+    Cymru IP-to-ASN DNS lookup, in place."""
+    pending = {}
+    for index, hub in enumerate(hubs):
+        if hub.get("ASN") != "AS???":
+            continue
+        host = hub.get("host") or ""
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            continue
+        pending[index] = _DNS_EXECUTOR.submit(_lookup_asn, host)
+
+    for index, future in pending.items():
+        try:
+            asn = future.result(timeout=DNS_LOOKUP_TIMEOUT_SECONDS)
+        except FutureTimeoutError:
+            logging.error(
+                "ASN lookup timed out for %s", hubs[index].get("host") or ""
+            )
+            continue
+        if asn:
+            hubs[index]["ASN"] = asn
+
+
+def annotate_dns_names(hubs: list[dict[str, Any]]) -> None:
     """Add a best-effort reverse DNS "dns_name" field to each hop, in place."""
     pending = {}
     for index, hub in enumerate(hubs):
@@ -184,11 +321,18 @@ def traceroute():
     try:
         data = json.loads(result.stdout)
     except json.JSONDecodeError:
-        msg = f"Failed to parse traceroute output for target {sanitize_for_log(target)}: {sanitize_for_log(result.stdout)}"
+        msg = (
+            f"Failed to parse traceroute output for target {sanitize_for_log(target)}: "
+            f"{sanitize_for_log(result.stdout)}"
+        )
         logging.error(msg)
         return jsonify({"error": msg}), 502
 
+    replace_nat64_names(data, NAT64)
+
     annotate_dns_names(data.get("report", {}).get("hubs", []))
+
+    annotate_asns(data.get("report", {}).get("hubs", []))
 
     logging.info("Traceroute to %s completed successfully.", target)
     return jsonify(data)
