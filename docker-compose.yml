@@ -20,7 +20,5 @@ services:
       - no-new-privileges:true
     restart: unless-stopped
     volumes:
-      - ./app.py:/app/app.py:ro
-      - ./static:/app/static:ro
-      - ./templates:/app/templates:ro
+      - ./src:/app/src:ro
       - ./logs:/app/logs:rw

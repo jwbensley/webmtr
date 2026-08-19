@@ -21,9 +21,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-cache
 
-COPY app.py ./
-COPY templates ./templates
-COPY static ./static
+COPY ./src/ ./
 
 ENV PATH="/app/.venv/bin:$PATH"
 

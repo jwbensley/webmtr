@@ -49,4 +49,15 @@ If you want to bing to a specific IPv6 address, set the `LISTEN_ADDR` env var us
 
 ## NAT64
 
-If running on an IPv6 only host which uses NAT64 to provide IPv4 connectivity, ensure the `NAT64` env var contains the prefix of the NAT64 network, e.g. `NAT64=64:ff9b::/96`. This will result in the IPv4 addresses of each hop being extracted from the mtr output and displayed, along with their reverse DNS lookup result, and the ASN of the IPv4 address; rather than the NAT64 addresses (which have no reverse DNS or ASN information).
+If running on an IPv6 only host which uses NAT64 to provide IPv4 connectivity, ensure the `NAT64` env var contains the prefix of the NAT64 network, e.g. `NAT64=64:ff9b::/96`. Leave this var defined but empty if on a dual stack host.
+
+With this env var set:
+
+* When an IPv4 address is entered as the target, it will be converted to a NAT64 address and the traceroute will be performed using that address.
+* When a traceroute is run to a NAT64 prefix (due to an IPv4 literal target or DNS64) the IPv4 addresses of each hop in the results are extracted from the mtr output and displayed as IPv4 addresses, along with their reverse DNS lookup result, and the ASN of the IPv4 address; rather than the NAT64 addresses (which have no reverse DNS or ASN information).
+
+## Tests
+
+```text
+uv run pytest src/tests.py -q
+```

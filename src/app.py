@@ -34,18 +34,19 @@ _DNS_EXECUTOR = ThreadPoolExecutor(
     max_workers=8, thread_name_prefix="dns-lookup"
 )
 
-_HOSTNAME_LABEL_RE = re.compile(
+HOSTNAME_LABEL_RE = re.compile(
     r"^(?!-)[A-Za-z0-9-]{1," + str(MAX_HOSTNAME_LENGTH) + r"}(?<!-)$"
 )
 
+LOG_SANITIZE_RE = re.compile(r"[\r\n\x00-\x1f\x7f]")
 
-_LOG_SANITIZE_RE = re.compile(r"[\r\n\x00-\x1f\x7f]")
+NAT64_SUPPORTED_PREFIX_LENGTHS = (32, 40, 48, 56, 64, 96)
 
 
 def sanitize_for_log(value: str) -> str:
     """Strip control/newline characters from untrusted input before logging
     it, to prevent log injection/forging (CWE-117)."""
-    return _LOG_SANITIZE_RE.sub("", value)
+    return LOG_SANITIZE_RE.sub("", value)
 
 
 def get_client_ip() -> str:
@@ -73,7 +74,7 @@ def is_valid_hostname(hostname: str) -> bool:
         logging.error("Invalid hostname length: %s", hostname)
         return False
     labels = hostname.rstrip(".").split(".")
-    match = all(_HOSTNAME_LABEL_RE.match(label) for label in labels)
+    match = all(HOSTNAME_LABEL_RE.match(label) for label in labels)
     if not match:
         logging.error("Invalid hostname format: %s", hostname)
     else:
@@ -113,8 +114,6 @@ def _extract_ipv4_from_nat64(ipv6_str: str, nat64_prefix: str) -> str | None:
     """If ipv6_str is a NAT64-mapped address inside nat64_prefix, return the
     IPv4 address embedded in it per RFC 6052; otherwise return None."""
 
-    _NAT64_SUPPORTED_PREFIX_LENGTHS = (32, 40, 48, 56, 64, 96)
-
     try:
         v6_address = ipaddress.IPv6Address(ipv6_str)
         prefix_net = ipaddress.IPv6Network(nat64_prefix, strict=False)
@@ -127,7 +126,7 @@ def _extract_ipv4_from_nat64(ipv6_str: str, nat64_prefix: str) -> str | None:
         return None
 
     prefix_len = prefix_net.prefixlen
-    if prefix_len not in _NAT64_SUPPORTED_PREFIX_LENGTHS:
+    if prefix_len not in NAT64_SUPPORTED_PREFIX_LENGTHS:
         return None
     if v6_address not in prefix_net:
         return None
@@ -267,6 +266,53 @@ def annotate_dns_names(hubs: list[dict[str, Any]]) -> None:
             hubs[index]["dns_name"] = ""
 
 
+def convert_ipv4_to_nat64(ipv4_str: str, nat64_prefix: str) -> str:
+    """Convert an IPv4 address string to a NAT64-mapped IPv6 address string
+    using the given NAT64 prefix, per RFC 6052."""
+
+    logging.info(
+        "Converting IPv4 %s to NAT64-mapped IPv6 using prefix %s",
+        sanitize_for_log(ipv4_str),
+        sanitize_for_log(nat64_prefix),
+    )
+
+    try:
+        ipv4 = ipaddress.IPv4Address(ipv4_str)
+        prefix_net = ipaddress.IPv6Network(nat64_prefix, strict=False)
+    except ValueError:
+        logging.error(
+            "Invalid IPv4 address or NAT64 prefix: %s, %s",
+            sanitize_for_log(ipv4_str),
+            sanitize_for_log(nat64_prefix),
+        )
+        return ipv4_str
+
+    prefix_len = prefix_net.prefixlen
+    if prefix_len not in NAT64_SUPPORTED_PREFIX_LENGTHS:
+        logging.error(
+            "NAT64 prefix length is not supported: %s",
+            sanitize_for_log(nat64_prefix),
+        )
+        return ipv4_str
+
+    # Embed the IPv4 address into the NAT64 prefix.
+    v6_bytes = bytearray(prefix_net.network_address.packed)
+    if prefix_len == 96:
+        v6_bytes[12:16] = ipv4.packed
+    else:
+        # RFC 6052 reserves a zero octet at bits 64-71 ('u'), so skip it
+        # before embedding the IPv4 bits.
+        v6_bytes[8:12] = b"\x00" + ipv4.packed
+
+    nat64_address = str(ipaddress.IPv6Address(bytes(v6_bytes)))
+    logging.info(
+        "Converted IPv4 %s to NAT64-mapped IPv6 %s",
+        sanitize_for_log(ipv4_str),
+        sanitize_for_log(nat64_address),
+    )
+    return nat64_address
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -281,15 +327,27 @@ def traceroute():
         sanitize_for_log(target),
     )
 
-    if not is_valid_target(target):
+    """
+    If using NAT64 convert a literal IPv4 address to a NAT64-mapped IPv6 address
+    """
+    if NAT64:
+        mtr_target = convert_ipv4_to_nat64(target, NAT64)
+    else:
+        mtr_target = target
+
+    if not is_valid_target(mtr_target):
         return (
             jsonify({"error": "Please enter a valid IP address or hostname."}),
             400,
         )
 
     try:
-        logging.info("Running traceroute to target: %s (%s)", target, target)
-        cmd = ["mtr", "-j", "-n", "-z", "-c", str(MTR_PING_COUNT), target]
+        cmd = ["mtr", "-j", "-n", "-z", "-c", str(MTR_PING_COUNT), mtr_target]
+        logging.info(
+            "Running traceroute to target: %s (%s)",
+            sanitize_for_log(target),
+            sanitize_for_log(mtr_target),
+        )
         logging.info("Executing command: %s", " ".join(cmd))
         result = subprocess.run(
             cmd,
@@ -299,7 +357,10 @@ def traceroute():
             check=False,
         )
     except subprocess.TimeoutExpired:
-        msg = f"Traceroute to {sanitize_for_log(target)} timed out after {MTR_TIMEOUT_SECONDS} seconds"
+        msg = (
+            f"Traceroute to {sanitize_for_log(mtr_target)} timed out after "
+            f"{MTR_TIMEOUT_SECONDS} seconds"
+        )
         logging.error(msg)
         return jsonify({"error": msg}), 504
     except FileNotFoundError:
@@ -312,8 +373,8 @@ def traceroute():
 
     if result.returncode != 0:
         msg = (
-            f"Traceroute to {sanitize_for_log(target)} failed with return code {result.returncode}: "
-            f"{sanitize_for_log(result.stderr.strip())}"
+            f"Traceroute to {sanitize_for_log(target)} failed with return code "
+            f"{result.returncode}: {sanitize_for_log(result.stderr.strip())}"
         )
         logging.error(msg)
         return jsonify({"error": msg}), 502
@@ -328,11 +389,16 @@ def traceroute():
         logging.error(msg)
         return jsonify({"error": msg}), 502
 
-    replace_nat64_names(data, NAT64)
+    """
+    If NAT64 is used, replace the NAT64-mapped IPv6 addresses in the traceroute output
+    with their corresponding IPv4 addresses, so that reverse DNS and ASN lookups can be
+    performed against the IPv4 addresses.
+    """
+    if NAT64:
+        replace_nat64_names(data, NAT64)
+        annotate_asns(data.get("report", {}).get("hubs", []))
 
     annotate_dns_names(data.get("report", {}).get("hubs", []))
-
-    annotate_asns(data.get("report", {}).get("hubs", []))
 
     logging.info("Traceroute to %s completed successfully.", target)
     return jsonify(data)
