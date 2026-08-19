@@ -43,6 +43,6 @@ The web application is built as follows:
 * A docker compose file is provided to run the application with a single command.
 * Capability NET_RAW is required for `mtr` to have ICMP privileges.
 
-## NAT64
+## Bindings
 
-This application supports NAT64 so that it can run on an IPv6 only host. If you're running it on an IPv6 only host, set the `NAT64` environment variable to the IPv6 prefix e.g. `64:ff9b::/96` in the `.env` file. If the host has dual-stack connectivity, leave this variable empty.
+If you want to bing to a specific IPv6 address, set the `LISTEN_ADDR` env var using square bracket syntax: `LISTEN_ADDR=[fe80::1122:3344:5566:7788]`

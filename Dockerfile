@@ -27,8 +27,7 @@ COPY static ./static
 
 ENV PATH="/app/.venv/bin:$PATH"
 
-RUN mkdir -p /app/logs \
-&& chown -R appuser:appuser /app
+RUN mkdir -p /app/logs
 
 USER appuser
 
