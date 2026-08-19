@@ -3,6 +3,7 @@ const targetInput = document.getElementById("target");
 const resultsBody = document.getElementById("results-body");
 const resultsTable = document.getElementById("results-table");
 const statusEl = document.getElementById("status");
+const destinationEl = document.getElementById("destination");
 const submitBtn = document.getElementById("submit-btn");
 
 const COLUMNS = ["count", "host", "dns_name", "ASN", "Loss%", "Snt", "Last", "Avg", "Best", "Wrst", "StDev"];
@@ -43,6 +44,8 @@ function setLoading(isLoading) {
 function clearResults() {
   resultsBody.innerHTML = "";
   resultsTable.classList.add("hidden");
+  destinationEl.textContent = "";
+  destinationEl.classList.add("hidden");
 }
 
 function showError(message) {
@@ -52,6 +55,12 @@ function showError(message) {
 
 function renderResults(data) {
   const hubs = (data && data.report && data.report.hubs) || [];
+
+  if (data && data.destination) {
+    destinationEl.textContent = `Destination: ${data.destination}`;
+    destinationEl.classList.remove("hidden");
+  }
+
   if (hubs.length === 0) {
     showError("No results returned.");
     return;

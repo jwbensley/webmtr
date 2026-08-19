@@ -115,6 +115,12 @@ button:hover:not(:disabled) {
   color: var(--error);
 }
 
+.destination {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+  color: var(--text);
+}
+
 table {
   width: 100%;
   border-collapse: collapse;

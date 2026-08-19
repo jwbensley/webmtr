@@ -94,6 +94,30 @@ def test_is_valid_target_rejects_invalid_targets(target):
     assert app.is_valid_target(target) is False
 
 
+# --- resolve_destination_ip ------------------------------------------------
+
+
+def test_resolve_destination_ip_returns_literal_ip_unchanged():
+    assert app.resolve_destination_ip("8.8.8.8") == "8.8.8.8"
+
+
+def test_resolve_destination_ip_resolves_hostname():
+    with patch.object(
+        app.socket,
+        "getaddrinfo",
+        return_value=[(None, None, None, None, ("93.184.216.34", 0))],
+    ):
+        assert app.resolve_destination_ip("example.com") == "93.184.216.34"
+
+
+def test_resolve_destination_ip_falls_back_to_hostname_on_failure():
+    with patch.object(app.socket, "getaddrinfo", side_effect=socket.gaierror):
+        assert (
+            app.resolve_destination_ip("nonexistent.invalid")
+            == "nonexistent.invalid"
+        )
+
+
 # --- reverse_dns_lookup ------------------------------------------------
 
 
@@ -242,6 +266,7 @@ def test_traceroute_success(client):
     data = response.get_json()
     hub = data["report"]["hubs"][0]
     assert hub["dns_name"] == "dns.google"
+    assert data["destination"] == "8.8.8.8"
 
 
 def test_traceroute_success_with_nat64_annotates_asn(client):
@@ -306,3 +331,25 @@ def test_traceroute_handles_invalid_json_output(client):
             "/traceroute", query_string={"target": "8.8.8.8"}
         )
     assert response.status_code == 502
+
+
+def test_traceroute_includes_resolved_destination_for_hostname(client):
+    with (
+        patch.object(
+            app.subprocess,
+            "run",
+            return_value=_mock_completed_process(stdout=MTR_OUTPUT),
+        ),
+        patch.object(app, "reverse_dns_lookup", return_value="dns.google"),
+        patch.object(
+            app.socket,
+            "getaddrinfo",
+            return_value=[(None, None, None, None, ("8.8.8.8", 0))],
+        ),
+    ):
+        response = client.get(
+            "/traceroute", query_string={"target": "dns.google"}
+        )
+
+    assert response.status_code == 200
+    assert response.get_json()["destination"] == "8.8.8.8"

@@ -313,6 +313,29 @@ def convert_ipv4_to_nat64(ipv4_str: str, nat64_prefix: str) -> str:
     return nat64_address
 
 
+def resolve_destination_ip(target: str) -> str:
+    """Best-effort resolution of the human-facing destination address: if
+    target is already a literal IP address, return it unchanged; if it's a
+    hostname, resolve it via forward DNS to the address mtr will likely
+    reach, falling back to the original hostname if resolution fails."""
+    try:
+        ipaddress.ip_address(target)
+        return target
+    except ValueError:
+        pass
+
+    try:
+        infos = socket.getaddrinfo(target, None)
+    except socket.gaierror:
+        logging.error(
+            "Forward DNS lookup failed for %s", sanitize_for_log(target)
+        )
+        return target
+    if not infos:
+        return target
+    return infos[0][4][0]
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -340,6 +363,11 @@ def traceroute():
             jsonify({"error": "Please enter a valid IP address or hostname."}),
             400,
         )
+
+    # Resolve the human-facing destination address in parallel with mtr, so
+    # the frontend can show what we were trying to reach even if the final
+    # hop is never reached.
+    destination_future = _DNS_EXECUTOR.submit(resolve_destination_ip, target)
 
     try:
         cmd = ["mtr", "-j", "-n", "-z", "-c", str(MTR_PING_COUNT), mtr_target]
@@ -399,6 +427,17 @@ def traceroute():
         annotate_asns(data.get("report", {}).get("hubs", []))
 
     annotate_dns_names(data.get("report", {}).get("hubs", []))
+
+    try:
+        data["destination"] = destination_future.result(
+            timeout=DNS_LOOKUP_TIMEOUT_SECONDS
+        )
+    except FutureTimeoutError:
+        logging.error(
+            "Destination DNS resolution timed out for %s",
+            sanitize_for_log(target),
+        )
+        data["destination"] = target
 
     logging.info("Traceroute to %s completed successfully.", target)
     return jsonify(data)
