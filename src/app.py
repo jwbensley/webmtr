@@ -42,6 +42,21 @@ LOG_SANITIZE_RE = re.compile(r"[\r\n\x00-\x1f\x7f]")
 
 NAT64_SUPPORTED_PREFIX_LENGTHS = (32, 40, 48, 56, 64, 96)
 
+# Browsers can't send a custom header cross-origin without a CORS preflight,
+# which this app never grants, so requiring it stops other sites from
+# triggering traceroutes via a visitor's browser (CSRF).
+REQUIRED_REQUEST_HEADER = "X-Requested-With"
+
+SECURITY_HEADERS = {
+    "Content-Security-Policy": (
+        "default-src 'self'; object-src 'none'; base-uri 'none'; "
+        "form-action 'self'; frame-ancestors 'none'"
+    ),
+    "X-Frame-Options": "DENY",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+}
+
 
 def sanitize_for_log(value: str) -> str:
     """Strip control/newline characters from untrusted input before logging
@@ -336,6 +351,13 @@ def resolve_destination_ip(target: str) -> str:
     return infos[0][4][0]
 
 
+@app.after_request
+def set_security_headers(response):
+    for header, value in SECURITY_HEADERS.items():
+        response.headers.setdefault(header, value)
+    return response
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -343,6 +365,17 @@ def index():
 
 @app.route("/traceroute")
 def traceroute():
+    if not request.headers.get(REQUIRED_REQUEST_HEADER):
+        logging.error(
+            "Rejected traceroute request from %s: missing %s header",
+            sanitize_for_log(get_client_ip()),
+            REQUIRED_REQUEST_HEADER,
+        )
+        return (
+            jsonify({"error": f"Missing {REQUIRED_REQUEST_HEADER} header."}),
+            403,
+        )
+
     target = request.args.get("target", "").strip()
     logging.info(
         "Received traceroute request from %s to %s",
@@ -370,7 +403,17 @@ def traceroute():
     destination_future = _DNS_EXECUTOR.submit(resolve_destination_ip, target)
 
     try:
-        cmd = ["mtr", "-j", "-n", "-z", "-c", str(MTR_PING_COUNT), mtr_target]
+        # "--" ensures the target can never be parsed as an mtr option.
+        cmd = [
+            "mtr",
+            "-j",
+            "-n",
+            "-z",
+            "-c",
+            str(MTR_PING_COUNT),
+            "--",
+            mtr_target,
+        ]
         logging.info(
             "Running traceroute to target: %s (%s)",
             sanitize_for_log(target),

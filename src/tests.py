@@ -23,6 +23,14 @@ import app
 @pytest.fixture()
 def client():
     app.app.testing = True
+    test_client = app.app.test_client()
+    test_client.environ_base["HTTP_X_REQUESTED_WITH"] = "XMLHttpRequest"
+    return test_client
+
+
+@pytest.fixture()
+def client_without_required_header():
+    app.app.testing = True
     return app.app.test_client()
 
 
@@ -242,6 +250,25 @@ def _mock_completed_process(stdout="", stderr="", returncode=0):
     return proc
 
 
+def test_traceroute_rejects_request_without_required_header(
+    client_without_required_header,
+):
+    with patch.object(app.subprocess, "run") as mock_run:
+        response = client_without_required_header.get(
+            "/traceroute", query_string={"target": "8.8.8.8"}
+        )
+    assert response.status_code == 403
+    assert "error" in response.get_json()
+    mock_run.assert_not_called()
+
+
+@pytest.mark.parametrize("path", ["/", "/traceroute"])
+def test_responses_include_security_headers(client, path):
+    response = client.get(path)
+    for header, value in app.SECURITY_HEADERS.items():
+        assert response.headers[header] == value
+
+
 def test_traceroute_rejects_invalid_target(client):
     response = client.get("/traceroute", query_string={"target": "; rm -rf /"})
     assert response.status_code == 400
@@ -263,6 +290,8 @@ def test_traceroute_success(client):
 
     assert response.status_code == 200
     mock_run.assert_called_once()
+    cmd = mock_run.call_args.args[0]
+    assert cmd[-2:] == ["--", "8.8.8.8"]
     data = response.get_json()
     hub = data["report"]["hubs"][0]
     assert hub["dns_name"] == "dns.google"

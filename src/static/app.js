@@ -19,7 +19,9 @@ form.addEventListener("submit", async (event) => {
   clearResults();
 
   try {
-    const response = await fetch(`/traceroute?target=${encodeURIComponent(target)}`);
+    const response = await fetch(`/traceroute?target=${encodeURIComponent(target)}`, {
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+    });
     const data = await response.json();
 
     if (!response.ok) {

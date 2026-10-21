@@ -27,10 +27,10 @@ docker compose up -d
 tail -f logs/access.log
 ```
 
-GET JSON output by calling the API directly:
+GET JSON output by calling the API directly (the `X-Requested-With` header is required, to stop other websites triggering traceroutes via a visitor's browser):
 
 ```text
-curl -s http://localhost:8371/traceroute?target=8.8.8.8 | jq
+curl -s -H 'X-Requested-With: curl' http://localhost:8371/traceroute?target=8.8.8.8 | jq
 ```
 
 Open a browser to <http://localhost:8371> to use the UI.
