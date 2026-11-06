@@ -1,0 +1,36 @@
+---
+name: Tests
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/tests.yml"
+      - "src/**/*.py"
+      - "pyproject.toml"
+      - "uv.lock"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Run tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install Python
+        run: uv python install 3.14
+
+      - name: Install Python dependencies
+        run: uv sync --locked --dev
+
+      - name: Run tests
+        run: uv run pytest src/tests.py -ra
